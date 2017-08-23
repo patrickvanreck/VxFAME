@@ -1,6 +1,7 @@
 from os import path, remove
 from time import sleep
-from shutil import copyfileobj
+from gzip import open as gzopen
+from zipfile import ZipFile
 from requests.auth import HTTPBasicAuth
 
 from fame.core.module import ProcessingModule
@@ -10,10 +11,23 @@ from fame.common.exceptions import ModuleInitializationError, \
 
 try:
     import requests
-
     HAVE_REQUESTS = True
 except ImportError:
     HAVE_REQUESTS = False
+
+
+RESPONSE_OK     = 0
+RESPONSE_ERROR  = -1
+
+GZIP    = ".gz"
+ZIP     = ".zip"
+
+class http:
+    OK              = 200
+    BadRequest      = 400
+    TooManyRequests = 429
+    json            = "application/json"
+    octetstream     = "application/octet-stream"
 
 
 class VxStream(ProcessingModule):
@@ -23,7 +37,7 @@ class VxStream(ProcessingModule):
                   "malware repository created by Payload Security."
     acts_on = ["apk", "chm", "eml", "excel", "executable", "hta", "html",
                "jar", "javascript", "lnk", "msg", "pdf", "pl", "powerpoint",
-               "ps1", "psd1", "psm1", "rtf", "svg", "swf", "vbe", "vbs",
+               "ps1", "psd1", "psm1", "rtf", "svg", "swf", "url", "vbe", "vbs",
                "word", "wsf", "zip"]
     generates = ["memory_dump", "pcap"]
 
@@ -56,7 +70,16 @@ class VxStream(ProcessingModule):
             "name": "environmentId",
             "type": "integer",
             "default": 100,
-            "description": "Environment setting where analyzes are run."
+            "description": "Environment setting where analyses are run.",
+            "option": True
+        },
+        {
+            "name": "extractfiles",
+            "type": "bool",
+            "default": True,
+            "description": "Downloads files extracted from an analysis upon "
+                           "retrieval of the report.",
+            "option": True
         },
         {
             "name": "html",
@@ -133,20 +156,26 @@ class VxStream(ProcessingModule):
         if not HAVE_REQUESTS:
             raise ModuleInitializationError(self,
                                             "Missing dependency: requests")
-        # init
+
+    def each_with_type(self, target, type):
         self.headers = {
             "User-agent": "FAME (https://github.com/certsocietegenerale/fame) "
                           "VxStream Module"
         }
-
-    def each_with_type(self, target, type):
         self.results = {}
 
+        self.type = type
+
+        # query /system/state to get environmentId
+        # check for the ones for WINDOWS, ANDROID or LINUX
+            # architecture field
+
+        self.extractfiles = True
         self.html = True
         self.memory = True
         self.pcap = True
-
         self.sha256 = "2cb713746d11f1f0cd9022aee69e3c1a47fc0a747d05131b4273b51f76a405f7"
+        # self.sha256 = "ef7ccb0f08fada65e5dca1eca10d7a76335fe2ca4769ac9f06be494c44c4cd1c"
 
         # submit file or url for analysis
         # self.submit(target, type)
@@ -174,26 +203,17 @@ class VxStream(ProcessingModule):
         if type == "url":
             url += "url"
             param["data"]["analyzeurl"] = target
-        else:
+        elif type == "apk":
+            pass
+        else:  # windows
             param["files"] = {"file": open(target, 'rb')}
 
-        res = requests.post(url, **param)
-
-        if res.status_code != 200:
-            if res.status_code == 400:
-                raise ModuleExecutionError("file upload failed or an unknown "
-                                           "submission error took place")
-            elif res.status_code == 429:
-                raise ModuleExecutionError("API key quota has been reached")
-            else:
-                raise ModuleExecutionError("an unspecified error took place")
+        msg = "unsuccessful file submission"
+        data = self.post(url, param, json=True, msg=msg)
+        if data:
+            self.sha256 = data["sha256"]
         else:
-            data = res.json()
-            if data["response_code"] == -1:
-                raise ModuleExecutionError("unsuccessful submission: " +
-                                           data["response"])
-            else:  # success
-                self.sha256 = data["response"]["sha256"]
+            raise ModuleExecutionError(msg + ", exiting")
 
     def heartbeat(self):
         url = self.api + "state/" + self.sha256
@@ -207,15 +227,11 @@ class VxStream(ProcessingModule):
         }
 
         stopwatch = 0
+        msg = "unsuccessful heartbeat check"
         while stopwatch < self.timeout:
-            res = requests.get(url, **param)
-
-            if res.status_code == 200:
-                data = res.json()
-                if data["response_code"] == 0:
-                    data = data["response"]
-                    if data["state"] == "SUCCESS":
-                        break
+            data = self.query(url, param, json=True, msg=msg)
+            if data and data["state"] == "SUCCESS":
+                break
 
             sleep(self.interval)
             stopwatch += self.interval
@@ -235,114 +251,153 @@ class VxStream(ProcessingModule):
             "headers": self.headers
         }
 
-        res = requests.get(url, **param)
+        msg = "unsuccessful report retrieval"
+        data = self.query(url, param, json=True, msg=msg)
+        if data:
+            data = data[0]
 
-        if res.status_code != 200:
-            raise ModuleExecutionError("an unspecified error took place")
-        else:
-            data = res.json()
-            if data["response_code"] == 0:
-                data = data["response"][0]
+            # signature
+            self.add_probable_name(data.get("vxfamily"))
+            self.results["signatures"] = data.get("vxfamily")
+            # tags
+            for t in data.get("classification_tags"):
+                self.add_tag(t)
+            # iocs
+            ioc = set()
+            if data.get("compromised_hosts"):
+                ioc |= set(data["compromised_hosts"])
+            if data.get("domains"):
+                ioc |= set(data["domains"])
+            if data.get("hosts"):
+                ioc |= set(data["hosts"])
+            for i in ioc:
+                self.add_ioc(i)
+            # extracted files
+            if self.extractfiles:
+                self.dropped(param, "dropped.zip", "Dropped Files", ZIP)
+            # html
+            if self.html:
+                param["params"]["type"] = "html"
+                self.result(param, "html", "Full Report", GZIP)
+            # memory
+            if self.memory:
+                param["params"]["type"] = "memory"
+                self.result(param, "raw", "Memory Dump", ZIP,
+                            register="memory_dump")
+            # pcap
+            if self.pcap:
+                param["params"]["type"] = "pcap"
+                self.result(param, "pcap", "PCAP", GZIP,
+                            register="pcap")
+            # results
+            self.results["analysis_start_time"] = data.get("analysis_start_time")
+            self.results["avdetect"] = data.get("avdetect")
+            self.results["environmentDescription"] = data.get("environmentDescription")
+            self.results["environmentId"] = data.get("environmentId")
+            self.results["isinteresting"] = data.get("isinteresting")
+            self.results["size"] = data.get("size")
+            self.results["submitname"] = data.get("submitname")
+            self.results["threatlevel"] = data.get("threatlevel")
+            self.results["threatscore"] = data.get("threatscore")
+            self.results["total_network_connections"] = data.get("total_network_connections")
+            self.results["total_processes"] = data.get("total_processes")
+            self.results["total_signatures"] = data.get("total_signatures")
+            self.results["type"] = data.get("type")
+            self.results["URL"] = self.url + "sample/" + self.sha256 + \
+                                  "?environmentId=" + str(self.environmentId)
+            self.results["verdict"] = data.get("verdict")
+            # screenshots
+            # (...)
 
-                # signature
-                self.add_probable_name(data["vxfamily"])
-                self.results["signatures"] = data["vxfamily"]
-                # tags
-                for t in data["classification_tags"]:
-                    self.add_tag(t)
-                # iocs
-                ioc = set(data["compromised_hosts"] +
-                          data["domains"] + data["hosts"])
-                for i in ioc:
-                    self.add_ioc(i)
-                # html
-                if self.html:
-                    param["params"]["type"] = "html"
-                    msg = "unable to download the HTML page for sample"
-                    self.downl(param, ".html", msg, "Report",
-                               gzip=True)
-                # memory
-                if self.memory:
-                    param["params"]["type"] = "memory"
-                    msg = "unable to download the memory dump for sample"
-                    self.downl(param, ".raw", msg, "memory", "memory_dump",
-                               zip=True)
-                # pcap
-                if self.pcap:
-                    param["params"]["type"] = "pcap"
-                    msg = "unable to download the network traffic capture " \
-                          "for sample"
-                    self.downl(param, ".pcap", msg, "PCAP", "pcap",
-                               gzip=True)
-                # results
-                self.results["analysis_start_time"] = data["analysis_start_time"]
-                self.results["avdetect"] = data["avdetect"]
-                self.results["environmentDescription"] = data["environmentDescription"]
-                self.results["environmentId"] = data["environmentId"]
-                self.results["isinteresting"] = data["isinteresting"]
-                self.results["size"] = data["size"]
-                self.results["submitname"] = data["submitname"]
-                self.results["threatlevel"] = data["threatlevel"]
-                self.results["threatscore"] = data["threatscore"]
-                self.results["total_network_connections"] = data["total_network_connections"]
-                self.results["total_processes"] = data["total_processes"]
-                self.results["total_signatures"] = data["total_signatures"]
-                self.results["type"] = data["type"]
-                self.results["URL"] = self.url + "sample/" + self.sha256 + \
-                                      "?environmentId=" + str(self.environmentId)
-                self.results["verdict"] = data["verdict"]
 
-    def downl(self, param, ext, msg, name,
-              register=None, zip=False, gzip=False):
+    def result(self, *arg, **kwarg):
         url = self.api + "result/" + self.sha256
-        res = requests.get(url, **param)
+        files = self.download(url, *arg)
+        for i in files:
+            self.add_support_file(arg[2], i)
+        if files and kwarg.get("register"):
+            self.register_files(kwarg["register"], files)
 
-        if res.status_code != 200:
-            self.log("error", msg + " " + self.sha256 + ": " + res.reason)
+    def dropped(self, *arg):
+        url = self.api + "sample-dropped-files/" + self.sha256
+        files = self.download(url, *arg)
+        # self.add_extraction(label, extraction)
+        if files:
+            for i in files:
+                self.add_extracted_file(i)
+
+    def download(self, url, param, ext, name, compression):
+        files, tmp = [], []
+        msg = "unsuccessful download of the " + name
+        data = self.query(url, param, bin=True, msg=msg)
+        if data:
+            ext = "." + ext
+            tmpdir = tempdir()
+            file = path.join(tmpdir, self.sha256 + ext)
+            decompressed = file
+
+            if compression == GZIP:
+                file += GZIP
+            elif compression == ZIP:
+                file += ZIP
+
+            with open(file, 'wb') as fd:
+                fd.write(data)
+
+            if compression == GZIP:
+                with gzopen(file, 'rb') as gz:
+                    with open(decompressed, 'wb') as fd:
+                        fd.write(gz.read())
+                remove(file)
+                tmp += [decompressed]
+            elif compression == ZIP:
+                zip = ZipFile(file, 'r')
+                for i in zip.namelist():
+                    tmp += [zip.extract(i, tmpdir)]
+                zip.close()
+                remove(file)
+
+            files = [i for i in tmp if not i.endswith(GZIP)]
+            for i in [i for i in tmp if i.endswith(GZIP)]:
+                file = i[:-len(GZIP)]
+                with gzopen(i, 'rb') as gz:
+                    with open(file, 'wb') as fd:
+                        fd.write(gz.read())
+                remove(i)
+                files += [file]
+
+        return files
+
+    def post(self, url, param, json=False, bin=False, msg=""):
+        self.query(url, param, post=True, json=json, bin=bin, msg=msg)
+
+    def query(self, url, param, post=False, json=False, bin=False, msg=""):
+        if not post:
+            res = requests.get(url, **param)
         else:
-            try:
+            res = requests.post(url, **param)
+
+        msg = self.sha256 + ("", ": ")[bool(msg)] + msg + " - "
+
+        if res.status_code == http.OK:
+            if res.headers["Content-Type"] == http.json:
                 data = res.json()
-                if data["response_code"] == -1:
-                    self.log("error", msg + " " + self.sha256 + ": " +
-                             data["response"]["error"])
-            except ValueError:
-                # tmpdir = tempdir()
-                # filepath = path.join(tmpdir, self.sha256 + ".pcap.gz")
-                filepath = self.sha256 + ext
-                if zip:
-                    filepath += ".zip"
-                elif gzip:
-                    filepath += ".gz"
+                if data["response_code"] == RESPONSE_ERROR:
+                    self.log("warning", msg + data["response"]["error"])
+                elif data["response_code"] == RESPONSE_OK and json:
+                    return data["response"]
+            elif res.headers["Content-Type"] == http.octetstream and bin:
+                return res.content
+        else:
+            msg += "%s (HTTP" + res.status_code + " " + res.reason + ")"
+            if res.status_code == http.BadRequest:
+                self.log("error", msg % "file submission error")
+            elif res.status_code == http.TooManyRequests:
+                raise ModuleExecutionError(msg % "API key quota has been reached")
+            else:
+                self.log("error", msg % "unspecified error")
+        return None
 
-                with open(filepath, 'wb') as fd:
-                    fd.write(res.content)
-
-                if zip:
-                    import zipfile
-                    zip = zipfile.ZipFile(filepath, 'r')
-                    zip.extractall(".")
-                    zip.close()
-                    # remove(filepath)
-                    filepath = filepath[:-4]
-                elif gzip:
-                    import gzip
-                    with gzip.open(filepath, 'rb') as gz:
-                        with open(self.sha256 + ext, 'wb') as fd:
-                            fd.write(gz.read())
-                    # remove(filepath)
-                    filepath = filepath[:-3]
-
-                    # import StringIO
-                    # gz = StringIO.StringIO()
-                    # gz.write(res.content)
-                    # gz.seek(0)
-                    # fd.write(gzip.GzipFile(fileobj=gz, mode='rb').read())
-
-                self.add_support_file(name, filepath)
-                if register:
-                    self.register_files(register, filepath)
-                # if extract:
-                #     self.add_extracted_file(filepath)
 
     def out(self, msg):
         from datetime import datetime
@@ -358,7 +413,6 @@ class VxStream(ProcessingModule):
             import httplib as http_client
         http_client.HTTPConnection.debuglevel = 1
 
-        # You must initialize logging, otherwise you'll not see debug output.
         logging.basicConfig()
         logging.getLogger().setLevel(logging.DEBUG)
         requests_log = logging.getLogger("requests.packages.urllib3")
