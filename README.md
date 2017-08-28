@@ -31,11 +31,16 @@ The module is developed with consistency in terms of nomenclature and purpose, p
 * `param`: `dict` with `requests` fields for HTTP requests with `requests.get` or `requests.post`;
 * `url`: `str` with the full URL of the API resource to be queried, excluding HTTP `GET` parameters.
 
+
+`self.results`
+
 # `vxstream/details.html`
 
 Jinja2 code
 
 (...)
+
+`self.results`
 
 # VxStream Sandbox API List
 The `vxstream` module consumes a selected few API resources from VxStream Sandbox to achieve its integration with FAME and thereby fulfil its purpose of malware analysis and reporting. The full list and description of API resources used by `vxstream` is, without any particular order, the following:
@@ -48,23 +53,25 @@ The `vxstream` module consumes a selected few API resources from VxStream Sandbo
 * `/system/state`: used to determine the available analysis environments.
 
 # Usage
+The installation of FAME is not complicated and can be accomplished by following the instructions at [Read the Docs](https://fame.readthedocs.io/en/latest/). As a modular framework, it provides means to support the development of additional modules in two manners:
+* fully integrated into the framework by utilizing the Flask web interface to create new analyzes and to visualize results that are saved onto its MongoDB database using a Celery task queue; or
+* offline testing without resorting to any of its main components by resorting to a helper Python script suitable for repeated usage.
 
-(...)
-
-
-copy the module to `fame/modules/community/processing/vxstream`
-
-* for offline testing
+Once FAME is installed and properly configured, running the framework from within its main folder `fame` is attainable by first instantiating the webserver, as such:
 ```
-./utils/run.sh utils/single_module.py -t vxstream <sample>
+$ ./utils/run.sh webserver.py
 ```
+The web interface is then available at http://127.0.0.1:4200/, if FAME is configured to run on the local system. Analysis submissions require one or more separate workers to be launched. FAME workers handle task queues and make sure that module dependencies are met before actually launching modules. One worker is launched with the following command:
+```
+$ ./utils/run.sh worker.py
+```
+Modules need to be placed at `modules/community/` in order to be recognized by FAME and subsequently be listed on the web interface as working modules, provided that they pass syntax and validation checks. The framework detects changes to modules if it is already running. In the case of `vxstream`, its location within the module folder tree is `modules/community/processing/vxstream`.
 
 
-for interface testing
-* `./utils/run.sh webserver.py`:
-* `./utils/run.sh worker.py`: FAME workers handle task queues and make sure that module dependencies are met before actually launching modules
-
-http://127.0.0.1:4200/
+The second, offline testing option is more convenient to run modules under development or to check their output structure. The helper utility allows to specify only one module for testing against one file alone. In this case, module checks are performed every time the helper utility is run, which is accomplished for `vxstream` as follows:
+```
+$ ./utils/run.sh utils/single_module.py -t vxstream <file>
+```
 
 # Resources
 https://certsocietegenerale.github.io/fame/<br />
