@@ -389,7 +389,8 @@ class VxStream(ProcessingModule):
             elif res.headers["Content-Type"] == http.octetstream and bin:
                 return res.content
             else:
-                self.log("warning", msg % "unexpected response data")
+                self.log("warning", msg + "unexpected response content type " +
+                         res.headers["Content-Type"])
         else:
             msg += "%s (HTTP" + res.status_code + " " + res.reason + ")"
             if res.status_code == http.BadRequest:
