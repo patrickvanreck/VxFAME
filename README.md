@@ -11,9 +11,10 @@ The `vxstream/vxstream.py` and `vxstream/details.html` files are described in de
 
 # `vxstream/vxstream.py`
 
-Most modules developed for FAME are subclasses of `ProcessingModule`, which is meant to be the base class for modules that perform some automated analysis of files or URLs. The purpose of `vxstream` fits the role of `ProcessingModule` and is therefore a subclass of it called `VxStream`.
+Most modules developed for FAME are subclasses of `ProcessingModule`, which is meant to be the base class for modules that perform some automated analysis of files or URLs. The purpose of `vxstream` fits the role of `ProcessingModule` and is therefore a subclass of it called `VxStream`. The next subsections compartmentalize the description of the module in terms of methods, variables and general workflow of its execution. 
 
-The methods of the module can be described as follows:
+## Methods
+The **methods** of the module can be described as follows:
 * `initialize`: checks for the presence of `requests` during module initialization;
 * `each_with_type`: defines the workflow of an analysis for each file or URL;
 * `submit`: submits a file or URL for analysis to `/api/submit` or `/api/submiturl`, respectively;
@@ -25,14 +26,28 @@ The methods of the module can be described as follows:
 * `post`: wraps `query` to change the type of HTTP request to `POST`;
 * `query`: conducts HTTP `GET` (default) or `POST` requests to the VxStream Sandbox API and handles predefined response errors.
 
-The module is developed with consistency in terms of nomenclature and purpose, particularly in variables used in different methods that have the same purpose. Some of those are described as follows:
+## Variables
+The module is developed with consistency in terms of nomenclature and purpose, particularly in **variables** used in different methods that have the same purpose. Some of those are described as follows:
 * `data`: `dict` with parsed JSON data or `str` with binary response data from a HTTP request;
-* `msg`: `str` with an error message to be logged;
+* `msg`: `str` holding an error message to be logged;
 * `param`: `dict` with `requests` fields for HTTP requests with `requests.get` or `requests.post`;
 * `url`: `str` with the full URL of the API resource to be queried, excluding HTTP `GET` parameters.
 
+Another set of **instance variables** have a module-wide scope. Of note are all module configurations that are set as instance variables by FAME.
+* `self.headers`: `dict` with the HTTP header field for HTTP queries;
+* `self.results`: `dict` with summary results of an analysis to be presented in the web interface as required by FAME;
+* `self.state`: `str` holding a symbolic identifier of the current state of the module (*i.e.*, `module` or a hash value).
 
-`self.results`
+## Execution Workflow
+
+A general workflow of the execution of `vxstream` is as follows:
+1. retrieve available analysis environments and check if the specified on is valid;
+2. submit a file for analysis;
+3. wait for an analysis to timeout or finish;
+4. retrieve an analysis report;
+5. populate the malware signature, tags, Indicators of Compromise (IOCs), 
+6. download all files dropped during an analysis, the full HTML report, and potentially a memory dump and a network traffic capture;
+7. finally populate `self.results` with an analysis summary.
 
 # `vxstream/details.html`
 

@@ -22,12 +22,17 @@ RESPONSE_ERROR  = -1
 GZIP    = ".gz"
 ZIP     = ".zip"
 
-class http:
+class HTTP:
     OK              = 200
     BadRequest      = 400
     TooManyRequests = 429
     json            = "application/json"
     octetstream     = "application/octet-stream"
+
+class Environment:
+    apk = "ANDROID"
+    nix = "LINUX"
+    win = "WINDOWS"
 
 
 class VxStream(ProcessingModule):
@@ -160,27 +165,51 @@ class VxStream(ProcessingModule):
     def each_with_type(self, target, type):
         self.headers = {
             "User-agent": "FAME (https://github.com/certsocietegenerale/fame) "
-                          "VxStream Module"
+                          "VxStream Sandbox Module"
         }
         self.results = {}
+        self.state = "module"
 
-        self.type = type
+        url = self.url + "system/state"
+        param = {
+            "params": {
+                "apikey": self.apikey,
+                "secret": self.secret
+            },
+            "headers": self.headers
+        }
+        msg = "unsuccessful system state query"
 
-        # query /system/state to get environmentId
-        # check for the ones for WINDOWS, ANDROID or LINUX
-            # architecture field
+        data = self.query(url, param, msg, json=True)
 
-        self.extractfiles = True
-        self.html = True
-        self.memory = True
-        self.pcap = True
-        self.sha256 = "2cb713746d11f1f0cd9022aee69e3c1a47fc0a747d05131b4273b51f76a405f7"
-        # self.sha256 = "ef7ccb0f08fada65e5dca1eca10d7a76335fe2ca4769ac9f06be494c44c4cd1c"
+        # type = "executable"
+
+        if data:
+            data = data["backend"]["nodes"][0]["environment"]
+            msg = "invalid or unavailable analysis environment(s)"
+
+            if type == "apk":
+                env = Environment.apk
+            else:  # url, windows
+                env = Environment.win
+
+            tmp = [i["ID"] for i in data if i["architecture"] == env]
+            if not self.environmentId in tmp or not tmp:
+                raise ModuleExecutionError(msg)
+        else:
+            self.warn("using configured analysis environment")
+
+        # self.extractfiles = True
+        # self.html = True
+        # self.memory = True
+        # self.pcap = True
+        # self.state = "2cb713746d11f1f0cd9022aee69e3c1a47fc0a747d05131b4273b51f76a405f7"
+        # self.state = "ef7ccb0f08fada65e5dca1eca10d7a76335fe2ca4769ac9f06be494c44c4cd1c"
 
         # submit file or url for analysis
-        # self.submit(target, type)
+        self.submit(target, type)
         # wait for the analysis to be over
-        # self.heartbeat()
+        self.heartbeat()
         # retrieve the report and populate results
         self.report()
 
@@ -199,6 +228,7 @@ class VxStream(ProcessingModule):
             "headers": self.headers,
             "verify": False
         }
+        msg = "unsuccessful file submission"
 
         if type == "url":
             url += "url"
@@ -208,15 +238,16 @@ class VxStream(ProcessingModule):
         else:  # windows
             param["files"] = {"file": open(target, 'rb')}
 
-        msg = "unsuccessful file submission"
-        data = self.post(url, param, json=True, msg=msg)
+        data = self.post(url, param, msg, json=True)
+
         if data:
-            self.sha256 = data["sha256"]
+            self.state = data["sha256"]
+            self.info("successful file submission")
         else:
             raise ModuleExecutionError(msg + ", exiting")
 
     def heartbeat(self):
-        url = self.api + "state/" + self.sha256
+        url = self.api + "state/" + self.state
         param = {
             "params": {
                 "apikey": self.apikey,
@@ -225,22 +256,32 @@ class VxStream(ProcessingModule):
             },
             "headers": self.headers
         }
+        msg = "unsuccessful heartbeat check"
 
         stopwatch = 0
-        msg = "unsuccessful heartbeat check"
         while stopwatch < self.timeout:
-            data = self.query(url, param, json=True, msg=msg)
+            data = self.query(url, param, msg, json=True)
             if data and data["state"] == "SUCCESS":
                 break
 
-            sleep(self.interval)
-            stopwatch += self.interval
+            if stopwatch + self.interval <= self.timeout:
+                tmp = self.interval
+            else:
+                tmp = self.timeout - stopwatch
+
+            self.info("analysis has not finished yet, waiting " +
+                      str(self.timeout - stopwatch) + " more seconds")
+
+            sleep(tmp)
+            stopwatch += tmp
 
         if stopwatch >= self.timeout:
             raise ModuleExecutionError("report retrieval timed out")
 
+        self.info("analysis finished, retrieving report")
+
     def report(self):
-        url = self.api + "scan/" + self.sha256
+        url = self.api + "scan/" + self.state
         param = {
             "params": {
                 "apikey": self.apikey,
@@ -250,9 +291,10 @@ class VxStream(ProcessingModule):
             },
             "headers": self.headers
         }
-
         msg = "unsuccessful report retrieval"
-        data = self.query(url, param, json=True, msg=msg)
+
+        data = self.query(url, param, msg, json=True)
+
         if data:
             data = data[0]
 
@@ -303,15 +345,14 @@ class VxStream(ProcessingModule):
             self.results["total_processes"] = data.get("total_processes")
             self.results["total_signatures"] = data.get("total_signatures")
             self.results["type"] = data.get("type")
-            self.results["URL"] = self.url + "sample/" + self.sha256 + \
+            self.results["URL"] = self.url + "sample/" + self.state + \
                                   "?environmentId=" + str(self.environmentId)
             self.results["verdict"] = data.get("verdict")
-            # screenshots
-            # (...)
-
+        else:
+            self.error("report response data invalid: " + str(data))
 
     def result(self, *arg, **kwarg):
-        url = self.api + "result/" + self.sha256
+        url = self.api + "result/" + self.state
         files = self.download(url, *arg)
         for i in files:
             self.add_support_file(arg[2], i)
@@ -319,7 +360,7 @@ class VxStream(ProcessingModule):
             self.register_files(kwarg["register"], files)
 
     def dropped(self, *arg):
-        url = self.api + "sample-dropped-files/" + self.sha256
+        url = self.api + "sample-dropped-files/" + self.state
         files = self.download(url, *arg)
         # self.add_extraction(label, extraction)
         if files:
@@ -329,11 +370,11 @@ class VxStream(ProcessingModule):
     def download(self, url, param, ext, name, compression):
         files, tmp = [], []
         msg = "unsuccessful download of the " + name
-        data = self.query(url, param, bin=True, msg=msg)
+        data = self.query(url, param, msg, bin=True)
         if data:
             ext = "." + ext
             tmpdir = tempdir()
-            file = path.join(tmpdir, self.sha256 + ext)
+            file = path.join(tmpdir, self.state + ext)
             decompressed = file
 
             if compression == GZIP:
@@ -368,61 +409,50 @@ class VxStream(ProcessingModule):
 
         return files
 
-    def post(self, url, param, json=False, bin=False, msg=""):
-        self.query(url, param, post=True, json=json, bin=bin, msg=msg)
+    def post(self, url, param, msg, json=False, bin=False):
+        return self.query(url, param, msg, post=True, json=json, bin=bin)
 
-    def query(self, url, param, post=False, json=False, bin=False, msg=""):
+    def query(self, url, param, msg, post=False, json=False, bin=False):
         if not post:
             res = requests.get(url, **param)
         else:
             res = requests.post(url, **param)
 
-        msg = self.sha256 + ("", ": ")[bool(msg)] + msg + " - "
+        msg = msg + " - "
 
-        if res.status_code == http.OK:
-            if res.headers["Content-Type"] == http.json:
+        if res.status_code == HTTP.OK:
+            if res.headers["Content-Type"] == HTTP.json:
                 data = res.json()
                 if data["response_code"] == RESPONSE_ERROR:
-                    self.log("warning", msg + data["response"]["error"])
+                    self.warn(msg + data["response"]["error"])
                 elif data["response_code"] == RESPONSE_OK and json:
                     return data["response"]
-            elif res.headers["Content-Type"] == http.octetstream and bin:
+                else:
+                    self.warn(msg + "unexpected JSON response code " +
+                             data["response_code"])
+            elif res.headers["Content-Type"] == HTTP.octetstream and bin:
                 return res.content
             else:
-                self.log("warning", msg + "unexpected response content type " +
+                self.warn(msg + "unexpected response content type " +
                          res.headers["Content-Type"])
         else:
             msg += "%s (HTTP" + res.status_code + " " + res.reason + ")"
-            if res.status_code == http.BadRequest:
-                self.log("error", msg % "file submission error")
-            elif res.status_code == http.TooManyRequests:
+            if res.status_code == HTTP.BadRequest:
+                self.error(msg % "file submission error")
+            elif res.status_code == HTTP.TooManyRequests:
                 raise ModuleExecutionError(msg % "API key quota has been reached")
             else:
-                self.log("error", msg % "unspecified error")
+                self.error(msg % "unspecified error")
         return None
 
+    def debug(self, msg):
+        self.log("debug", self.state + ": " + msg)
 
-    def out(self, msg):
-        from datetime import datetime
-        time = datetime.utcnow().strftime("%a %d %b %Y %H:%M:%S.%f +0000 UTC")
-        print "%s: %s" % (time, msg)
+    def info(self, msg):
+        self.log("info", self.state + ": " + msg)
 
-    def debugreq(self):
-        import logging
-        try:
-            import http.client as http_client
-        except ImportError:
-            # Python 2
-            import httplib as http_client
-        http_client.HTTPConnection.debuglevel = 1
+    def warn(self, msg):
+        self.log("warning", self.state + ": " + msg)
 
-        logging.basicConfig()
-        logging.getLogger().setLevel(logging.DEBUG)
-        requests_log = logging.getLogger("requests.packages.urllib3")
-        requests_log.setLevel(logging.DEBUG)
-        requests_log.propagate = True
-
-        # self.out(res.headers)
-        # self.out(str(res.status_code) + " " + res.reason)
-        # self.out(res.text)
-        # self.out(res.json()["response_code"])
+    def error(self, msg, ):
+        self.log("error", self.state + ": " + msg)
