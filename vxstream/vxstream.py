@@ -19,6 +19,8 @@ except ImportError:
 RESPONSE_OK     = 0
 RESPONSE_ERROR  = -1
 
+API_ERROR = "API response data format differs for "
+
 GZIP    = ".gz"
 ZIP     = ".zip"
 
@@ -42,8 +44,8 @@ class VxStream(ProcessingModule):
                   "malware repository created by Payload Security."
     acts_on = ["apk", "chm", "eml", "excel", "executable", "hta", "html",
                "jar", "javascript", "lnk", "msg", "pdf", "pl", "powerpoint",
-               "ps1", "psd1", "psm1", "rtf", "svg", "swf", "url", "vbe", "vbs",
-               "word", "wsf", "zip"]
+               "ps1", "psd1", "psm1", "pub", "rtf", "sct", "svg", "swf", "url",
+               "vbe", "vbs", "word", "wsf", "zip"]
     generates = ["memory_dump", "pcap"]
 
     config = [
@@ -182,29 +184,24 @@ class VxStream(ProcessingModule):
 
         data = self.query(url, param, msg, json=True)
 
-        # type = "executable"
-
         if data:
-            data = data["backend"]["nodes"][0]["environment"]
+            try:
+                data = data["backend"]["nodes"][0]["environment"]
+            except (KeyError, IndexError):
+                raise ModuleExecutionError(API_ERROR + url)
             msg = "invalid or unavailable analysis environment(s)"
 
             if type == "apk":
                 env = Environment.apk
             else:  # url, windows
                 env = Environment.win
+            # Linux unsupported by FAME
 
-            tmp = [i["ID"] for i in data if i["architecture"] == env]
+            tmp = [i.get("ID") for i in data if i.get("architecture") == env]
             if not self.environmentId in tmp or not tmp:
                 raise ModuleExecutionError(msg)
         else:
             self.warn("using configured analysis environment")
-
-        # self.extractfiles = True
-        # self.html = True
-        # self.memory = True
-        # self.pcap = True
-        # self.state = "2cb713746d11f1f0cd9022aee69e3c1a47fc0a747d05131b4273b51f76a405f7"
-        # self.state = "ef7ccb0f08fada65e5dca1eca10d7a76335fe2ca4769ac9f06be494c44c4cd1c"
 
         # submit file or url for analysis
         self.submit(target, type)
@@ -233,15 +230,19 @@ class VxStream(ProcessingModule):
         if type == "url":
             url += "url"
             param["data"]["analyzeurl"] = target
-        elif type == "apk":
-            pass
-        else:  # windows
+        # elif type == "apk":
+            # nothing changes
+        #    pass
+        else:  # apk, windows
             param["files"] = {"file": open(target, 'rb')}
 
         data = self.post(url, param, msg, json=True)
 
         if data:
-            self.state = data["sha256"]
+            try:
+                self.state = data["sha256"]
+            except KeyError:
+                raise ModuleExecutionError(API_ERROR + url)
             self.info("successful file submission")
         else:
             raise ModuleExecutionError(msg + ", exiting")
@@ -261,8 +262,11 @@ class VxStream(ProcessingModule):
         stopwatch = 0
         while stopwatch < self.timeout:
             data = self.query(url, param, msg, json=True)
-            if data and data["state"] == "SUCCESS":
-                break
+            try:
+                if data and data["state"] == "SUCCESS":
+                    break
+            except KeyError:
+                raise ModuleExecutionError(API_ERROR + url)
 
             if stopwatch + self.interval <= self.timeout:
                 tmp = self.interval
@@ -296,7 +300,10 @@ class VxStream(ProcessingModule):
         data = self.query(url, param, msg, json=True)
 
         if data:
-            data = data[0]
+            try:
+                data = data[0]
+            except IndexError:
+                raise ModuleExecutionError(API_ERROR + url)
 
             # signature
             self.add_probable_name(data.get("vxfamily"))
