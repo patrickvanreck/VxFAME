@@ -11,25 +11,25 @@ from fame.common.exceptions import ModuleInitializationError, \
 
 try:
     import requests
+
     HAVE_REQUESTS = True
 except ImportError:
     HAVE_REQUESTS = False
 
+RESPONSE_OK = 0
+RESPONSE_ERROR = -1
 
-RESPONSE_OK     = 0
-RESPONSE_ERROR  = -1
+GZIP = ".gz"
+ZIP = ".zip"
 
-API_ERROR = "API response data format differs for "
-
-GZIP    = ".gz"
-ZIP     = ".zip"
 
 class HTTP:
-    OK              = 200
-    BadRequest      = 400
+    OK = 200
+    BadRequest = 400
     TooManyRequests = 429
-    json            = "application/json"
-    octetstream     = "application/octet-stream"
+    json = "application/json"
+    octetstream = "application/octet-stream"
+
 
 class Environment:
     apk = "ANDROID"
@@ -37,10 +37,17 @@ class Environment:
     win = "WINDOWS"
 
 
+class VxStreamAPIDataFormatError(ModuleExecutionError):
+    err = "API response data format differs for "
+
+    def __init__(self, msg):
+        super(VxStreamAPIDataFormatError, self).__init__(self.err + msg)
+
+
 class VxStream(ProcessingModule):
     name = "vxstream"
     description = "VxStream Sandbox features in-depth static and dynamic " \
-                  "analysis techniques within sanboxed environments and is a " \
+                  "analysis techniques within sandboxed environments and is a " \
                   "malware repository created by Payload Security."
     acts_on = ["apk", "chm", "eml", "excel", "executable", "hta", "html",
                "jar", "javascript", "lnk", "msg", "pdf", "pl", "powerpoint",
@@ -52,25 +59,25 @@ class VxStream(ProcessingModule):
         {
             "name": "url",
             "type": "str",
-            "default": "https://demo11.vxstream-sandbox.com/",
+            "default": "https://www.vxstream-sandbox.com/",
             "description": "Base URL of the online service."
         },
         {
             "name": "api",
             "type": "str",
-            "default": "https://demo11.vxstream-sandbox.com/api/",
+            "default": "https://www.vxstream-sandbox.com/api/",
             "description": "URL of the API endpoint."
         },
         {
             "name": "apikey",
             "type": "str",
-            "default": "3f7zqrvwpow0w8s8kc8gssow",
+            "default": "",
             "description": "API key of the service account."
         },
         {
             "name": "secret",
             "type": "str",
-            "default": "1b7b64431ec654ed4db81985909e0290309d3108b07bb400",
+            "default": "",
             "description": "API key secret of the service account."
         },
         {
@@ -167,7 +174,7 @@ class VxStream(ProcessingModule):
     def each_with_type(self, target, type):
         self.headers = {
             "User-agent": "FAME (https://github.com/certsocietegenerale/fame) "
-                          "VxStream Sandbox Module"
+                          "VxStream Sandbox Processing Module"
         }
         self.results = {}
         self.state = "module"
@@ -188,7 +195,7 @@ class VxStream(ProcessingModule):
             try:
                 data = data["backend"]["nodes"][0]["environment"]
             except (KeyError, IndexError):
-                raise ModuleExecutionError(API_ERROR + url)
+                raise VxStreamAPIDataFormatError(url)
             msg = "invalid or unavailable analysis environment(s)"
 
             if type == "apk":
@@ -230,7 +237,7 @@ class VxStream(ProcessingModule):
         if type == "url":
             url += "url"
             param["data"]["analyzeurl"] = target
-        # elif type == "apk":
+            # elif type == "apk":
             # nothing changes
         #    pass
         else:  # apk, windows
@@ -242,8 +249,8 @@ class VxStream(ProcessingModule):
             try:
                 self.state = data["sha256"]
             except KeyError:
-                raise ModuleExecutionError(API_ERROR + url)
-            self.info("successful file submission")
+                raise VxStreamAPIDataFormatError(url)
+            self.inf("successful file submission")
         else:
             raise ModuleExecutionError(msg + ", exiting")
 
@@ -266,15 +273,15 @@ class VxStream(ProcessingModule):
                 if data and data["state"] == "SUCCESS":
                     break
             except KeyError:
-                raise ModuleExecutionError(API_ERROR + url)
+                raise VxStreamAPIDataFormatError(url)
 
             if stopwatch + self.interval <= self.timeout:
                 tmp = self.interval
             else:
                 tmp = self.timeout - stopwatch
 
-            self.info("analysis has not finished yet, waiting " +
-                      str(self.timeout - stopwatch) + " more seconds")
+            self.inf("analysis has not finished yet, waiting " +
+                     str(self.timeout - stopwatch) + " more seconds")
 
             sleep(tmp)
             stopwatch += tmp
@@ -282,7 +289,7 @@ class VxStream(ProcessingModule):
         if stopwatch >= self.timeout:
             raise ModuleExecutionError("report retrieval timed out")
 
-        self.info("analysis finished, retrieving report")
+        self.inf("analysis finished, retrieving report")
 
     def report(self):
         url = self.api + "scan/" + self.state
@@ -303,7 +310,7 @@ class VxStream(ProcessingModule):
             try:
                 data = data[0]
             except IndexError:
-                raise ModuleExecutionError(API_ERROR + url)
+                raise VxStreamAPIDataFormatError(url)
 
             # signature
             self.add_probable_name(data.get("vxfamily"))
@@ -339,16 +346,19 @@ class VxStream(ProcessingModule):
                 self.result(param, "pcap", "PCAP", GZIP,
                             register="pcap")
             # results
-            self.results["analysis_start_time"] = data.get("analysis_start_time")
+            self.results["analysis_start_time"] = data.get(
+                "analysis_start_time")
             self.results["avdetect"] = data.get("avdetect")
-            self.results["environmentDescription"] = data.get("environmentDescription")
+            self.results["environmentDescription"] = data.get(
+                "environmentDescription")
             self.results["environmentId"] = data.get("environmentId")
             self.results["isinteresting"] = data.get("isinteresting")
             self.results["size"] = data.get("size")
             self.results["submitname"] = data.get("submitname")
             self.results["threatlevel"] = data.get("threatlevel")
             self.results["threatscore"] = data.get("threatscore")
-            self.results["total_network_connections"] = data.get("total_network_connections")
+            self.results["total_network_connections"] = data.get(
+                "total_network_connections")
             self.results["total_processes"] = data.get("total_processes")
             self.results["total_signatures"] = data.get("total_signatures")
             self.results["type"] = data.get("type")
@@ -429,6 +439,7 @@ class VxStream(ProcessingModule):
 
         if res.status_code == HTTP.OK:
             if res.headers["Content-Type"] == HTTP.json:
+                null = None  # to account for potential JSON null values
                 data = res.json()
                 if data["response_code"] == RESPONSE_ERROR:
                     self.warn(msg + data["response"]["error"])
@@ -436,18 +447,19 @@ class VxStream(ProcessingModule):
                     return data["response"]
                 else:
                     self.warn(msg + "unexpected JSON response code " +
-                             data["response_code"])
+                              data["response_code"])
             elif res.headers["Content-Type"] == HTTP.octetstream and bin:
                 return res.content
             else:
                 self.warn(msg + "unexpected response content type " +
-                         res.headers["Content-Type"])
+                          res.headers["Content-Type"])
         else:
             msg += "%s (HTTP" + res.status_code + " " + res.reason + ")"
             if res.status_code == HTTP.BadRequest:
                 self.error(msg % "file submission error")
             elif res.status_code == HTTP.TooManyRequests:
-                raise ModuleExecutionError(msg % "API key quota has been reached")
+                raise ModuleExecutionError(
+                    msg % "API key quota has been reached")
             else:
                 self.error(msg % "unspecified error")
         return None
@@ -455,7 +467,7 @@ class VxStream(ProcessingModule):
     def debug(self, msg):
         self.log("debug", self.state + ": " + msg)
 
-    def info(self, msg):
+    def inf(self, msg):
         self.log("info", self.state + ": " + msg)
 
     def warn(self, msg):
