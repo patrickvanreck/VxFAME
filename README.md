@@ -11,7 +11,7 @@ Both modules were developed while considering both the usefulness and completene
 The `vxstream/vxstream.py` and `vxstream/details.html` files are described in detail in the next two sections, respectively. The sections that follow describe `vxstream.py` and list all the API resources used by the module. The next to last section overviews the usage of the module, while the very last one lists resources consulted throughout development.
 
 # `vxstream/vxstream.py`
-Most modules developed for FAME are subclasses of `ProcessingModule`, which is meant to be the base class for modules that perform some automated analysis of files or URLs. The purpose of `vxstream` fits the role of `ProcessingModule` and is therefore a subclass of it called `VxStream`. The next subsections compartmentalize the description of the module in terms of methods, variables and general workflow of its execution. 
+Most modules developed for FAME are subclasses of `ProcessingModule`, which is meant to be the base class for modules that perform some automated analysis of files or URLs. The purpose of `vxstream` fits the role of `ProcessingModule` and is therefore a subclass of it called `VxStream`. The next subsections compartmentalize the description of the module in terms of methods, variables and general workflow of its execution.
 
 ## Methods
 The **methods** of the module can be described as follows, in the same order as they appear in the source code:
@@ -64,7 +64,7 @@ On the other hand, noteworhty **variables** are described as follows:
 * `indicators`: `list` of `dict` with a name and a description of the indicator.
 
 # VxStream Sandbox API List
-The `VxStream` and `VxStreamIntelligence` modules consume a selected few API resources from VxStream Sandbox to achieve their integration with FAME and thereby fulfil their purpose of malware analysis and reporting. The full list and description of API resources used by the modules is, in alphabetical order, the following:
+The `VxStream` and `VxStreamIntelligence` modules consume a selected few API resources from VxStream Sandbox to achieve their integration with FAME and thereby fulfill their purpose of malware analysis and reporting. The full list and description of API resources used by the modules is, in alphabetical order, the following:
 * `/api/result`: used to retrieve particular result data of an analysis, namely full HTML reports, memory dumps and network traffic captures;
 * `/api/sample-dropped-files/`: used to download potentially malicious files dropped during an analysis;
 * `/api/scan`: used to retrieve summary information of an analysis;

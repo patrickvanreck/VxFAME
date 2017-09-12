@@ -96,6 +96,13 @@ class VxStream(ProcessingModule):
             "option": True
         },
         {
+            "name": "graceperiod",
+            "type": "integer",
+            "default": 300,
+            "description": "Grace period value in seconds of the analysis "
+                           "startup window.",
+        },
+        {
             "name": "html",
             "type": "bool",
             "default": True,
@@ -144,9 +151,9 @@ class VxStream(ProcessingModule):
         {
             "name": "timeout",
             "type": "integer",
-            "default": 240,
+            "default": 600,
             "description": "Timeout value in seconds of the wait time for the "
-                           "end of an analysis."
+                           "end of an analysis after the grace period."
         },
         {
             "name": "torenabledanalysis",
@@ -265,6 +272,27 @@ class VxStream(ProcessingModule):
             "headers": self.headers
         }
         msg = "unsuccessful heartbeat check"
+
+        try:
+            self.timeout = int(self.timeout)
+            if self.timeout < 0:
+                raise ValueError
+        except ValueError:
+            self.warn("invalid timeout (%s) value, "
+                      "using default value of 600 seconds" % self.timeout)
+            self.timeout = 600
+        try:
+            self.graceperiod = int(self.graceperiod)
+            if self.graceperiod < 0:
+                raise ValueError
+        except ValueError:
+            self.warn("invalid grace period (%s) value, "
+                      "using default value of 300 seconds" % self.graceperiod)
+            self.graceperiod = 300
+
+        self.inf("waiting %s seconds before checking the analysis status"
+                 % self.graceperiod)
+        sleep(self.graceperiod)
 
         stopwatch = 0
         while stopwatch < self.timeout:
