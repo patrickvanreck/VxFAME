@@ -49,10 +49,33 @@ class VxStream(ProcessingModule):
     description = "VxStream Sandbox features in-depth static and dynamic " \
                   "analysis techniques within sandboxed environments and is a " \
                   "malware repository created by Payload Security."
-    acts_on = ["apk", "chm", "eml", "excel", "executable", "hta", "html",
-               "jar", "javascript", "lnk", "msg", "pdf", "pl", "powerpoint",
-               "ps1", "psd1", "psm1", "pub", "rtf", "sct", "svg", "swf", "url",
-               "vbe", "vbs", "word", "wsf", "zip"]
+
+    acts_on = ["apk", "eml", "excel", "executable", "html", "jar",
+               "javascript", "msg", "pdf", "powerpoint", "word", "zip"]
+    acts_on += [
+        "application/arj",  # arj
+        "application/octet-stream",  # wim
+        "application/vnd.ms-htmlhelp",  # chm
+        "application/x-7z-compressed",  # 7z
+        "application/x-ace-compressed",  # ace
+        "application/x-bzip2",  # bzip2
+        "application/x-executable",  # elf
+        "application/x-gzip",  # gzip2
+        "application/x-iso9660-image",  # iso
+        "application/x-ms-shortcut",  # lnk
+        "application/x-mspublisher",  # pub
+        "application/x-perl",  # pl
+        "application/x-rar-compressed",  # rar, rev
+        "application/x-shockwave-flash",  # swf
+        "application/x-tar",  # tar
+        "application/x-xz"  # xz
+        "application/xml",  # sct, wsf
+        "image/svg+xml",  # svg
+        "text/html",  # hta
+        "text/plain",  # ps1, psd1, psm1, vbe, vbs
+        "text/x-python"  # py
+    ]
+
     generates = ["memory_dump", "pcap"]
 
     config = [
@@ -207,9 +230,10 @@ class VxStream(ProcessingModule):
 
             if type == "apk":
                 env = Environment.apk
+            elif type == "application/x-executable":
+                env = Environment.nix
             else:  # url, windows
                 env = Environment.win
-            # Linux unsupported by FAME
 
             tmp = [i.get("ID") for i in data if i.get("architecture") == env]
             if not self.environmentId in tmp or not tmp:
